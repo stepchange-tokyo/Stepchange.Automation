@@ -1,0 +1,6 @@
+@Spat4.PointsConversion_HostAddress = http://localhost:5196
+
+GET {{Spat4.PointsConversion_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
