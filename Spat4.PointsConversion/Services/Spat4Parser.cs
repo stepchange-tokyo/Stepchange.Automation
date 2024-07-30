@@ -95,8 +95,8 @@ internal static partial class Spat4Parser
         return targetInput != null;
     }
 
-    public static bool IsExchangeForCashPage(string htmlString) => htmlString.Contains(HTMLTARGET_TEXT_EXCHANGE_FOR_CASH);
-    public static bool IsUsePointsPage(string htmlString) => htmlString.Contains(HTMLTARGET_TEXT_USE_POINTS);
+    public static bool IsUsePointsPage(string htmlString) => htmlString.Contains(HTMLTARGET_TEXT_EXCHANGE_FOR_CASH);
+    public static bool IsExchangeForCashPage(string htmlString) => htmlString.Contains(HTMLTARGET_TEXT_USE_POINTS);
 
     [GeneratedRegex("[^.0-9]")]
     private static partial Regex NonNumericRegex();

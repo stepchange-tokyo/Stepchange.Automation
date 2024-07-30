@@ -4,7 +4,7 @@ namespace Spat4.PointsConversion.Services;
 
 public class Spat4Client : IDisposable
 {
-    private long? _pointsBalance;
+    private const string _requestPath = "spat4/pp";
     private bool _isLoggedIn;
     private readonly HttpClient _client;
     private readonly Account _account;
@@ -28,7 +28,7 @@ public class Spat4Client : IDisposable
     {
         _logger.LogInformation("Attempting to log in.");
 
-        var response = await _client.GetAsync("spat4/pp");
+        var response = await _client.GetAsync(_requestPath);
         var htmlString = await response.Content.ReadAsStringAsync();
 
         var sessionId = Spat4Parser.ParseSessionId(htmlString);
@@ -54,7 +54,7 @@ public class Spat4Client : IDisposable
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
 
-        response = await _client.PostAsync("spat4/pp", formEncodedContent);
+        response = await _client.PostAsync(_requestPath, formEncodedContent);
         htmlString = await response.Content.ReadAsStringAsync();
 
         _isLoggedIn = Spat4Parser.CheckLoggedIn(htmlString);
@@ -72,97 +72,98 @@ public class Spat4Client : IDisposable
             throw new InvalidOperationException("Must be logged in to convert points.");
         }
 
-        _logger.LogInformation("Starting point conversion for account {AccountNumber}, initial point balance: {PointsBalance}.", _account.AccountNumber, _pointsBalance);
+        var currentPageHtml = await NavigateToUsePointsPage(); // We may be able to skip this call and go straight to the exchange for cash page
 
-        var htmlString = await NavigateToExchangeForCashPage(); // I think we can actually skip this call and go straight to the points to cash page
-        _pointsBalance = Spat4Parser.ParsePointsBalance(htmlString);
+        if (!Spat4Parser.IsUsePointsPage(currentPageHtml))
+        {
+            _logger.LogError("Failed to navigate to the exchange for cash page.");
+            return;
+        }
 
-        var conversionRounds = _pointsBalance / _options.MinimumConversionAmount;
-        var maxConversionRounds = conversionRounds > _options.MaxConversionsPerAccountPerDay ? _options.MaxConversionsPerAccountPerDay : conversionRounds;
+        var pointsBalance = Spat4Parser.ParsePointsBalance(currentPageHtml);
+
+        if (pointsBalance is null)
+        {
+            _logger.LogError("Failed to read points balance.");
+            return;
+        }
+
+        _logger.LogInformation("Starting point conversion for account {AccountNumber}, initial point balance: {PointsBalance}.", _account.AccountNumber, pointsBalance.Value);
+
+        var conversionRounds = pointsBalance.Value / _options.MinimumConversionAmount;
+        conversionRounds = Math.Min(conversionRounds, _options.MaxConversionsPerAccountPerDay);
 
         var conversionRoundCount = 0;
-        while (_pointsBalance >= _options.MinimumConversionAmount && conversionRoundCount < maxConversionRounds)
+        while (conversionRoundCount < conversionRounds)
         {
             conversionRoundCount++;
-            _logger.LogInformation("Converting points, round {ConversionRoundCount} of {MaxConversionRounds}", conversionRoundCount, maxConversionRounds);
+            _logger.LogInformation("Converting points, round {ConversionRoundCount} of {ConversionRounds}", conversionRoundCount, conversionRounds);
 
-            if (!Spat4Parser.IsExchangeForCashPage(htmlString))
+            currentPageHtml = await NavigateToExchangeForCashPage();
+
+            if (!Spat4Parser.IsExchangeForCashPage(currentPageHtml))
             {
                 _logger.LogError("Failed to navigate to the exchange for cash page.");
                 break;
             }
 
-            htmlString = await NavigateToUsePointsPage();
+            currentPageHtml = await NavigateToExchangeConfirmationPage();
 
-            if (!Spat4Parser.IsUsePointsPage(htmlString))
-            {
-                _logger.LogError("Failed to navigate to the use points page.");
-                break;
-            }
-
-            htmlString = await NavigateToExchangeConfirmationPage();
-
-            if (!Spat4Parser.CheckExchangeFormContainer(htmlString))
+            if (!Spat4Parser.CheckExchangeFormContainer(currentPageHtml))
             {
                 _logger.LogError("Failed to confirm the exchange.");
                 break;
             }
 
-            htmlString = await NavigateToCompleteConversionPage();
+            currentPageHtml = await NavigateToCompleteConversionPage();
 
-            var metaContent = Spat4Parser.ParseMetaContent(htmlString);
+            var metaContent = Spat4Parser.ParseMetaContent(currentPageHtml);
             if (!string.IsNullOrWhiteSpace(metaContent))
             {
                 _logger.LogInformation("Finalised points conversion.");
-                var keys = Spat4Parser.GetKeys(metaContent);
+                currentPageHtml = await NavigateToHomePageAfterConversion(metaContent);
 
-                var queryParams = new Dictionary<string, string>
+                var newPointsBalance = Spat4Parser.ParsePointsBalance(currentPageHtml);
+
+                if (newPointsBalance is not null && newPointsBalance.Value < pointsBalance.Value)
                 {
-                    { PageData.KEY_1, keys["key1"] },
-                    { PageData.KEY_2, keys["key2"] }
-                };
+                    _logger.LogInformation("Completed points conversion round {ConversionRoundCount} of {ConversionsRounds}, new points balance: {NewAvailablePointsBalance}",
+                        conversionRoundCount, conversionRounds, newPointsBalance);
 
-                var uri = BuildUriWithQueryParameters("spat4/pp", queryParams);
-                var response = await _client.GetAsync(uri);
-                htmlString = await response.Content.ReadAsStringAsync();
-
-                var newPointsBalance = Spat4Parser.ParsePointsBalance(htmlString);
-
-                if (newPointsBalance < _pointsBalance)
-                {
-                    _logger.LogInformation("Completed points conversion round {ConversionRoundCount} of {MaxConversionsRounds}, new points balance: {PointsBalance}",
-                        conversionRoundCount, maxConversionRounds, newPointsBalance);
+                    pointsBalance = newPointsBalance;
 
                     await Task.Delay(Random.Shared.Next(_options.MinConversionWaitTimeInMilliseconds, _options.MaxConversionWaitTimeInMilliseconds));
                 }
                 else
                 {
+                    _logger.LogError("Failed to navigate to the home page.");
                     break;
                 }
             }
         }
 
-        _logger.LogInformation("Points conversion complete.");
+        if (conversionRoundCount > 0)
+        {
+            _logger.LogInformation("Points conversion complete.");
+        }
+        else
+        {
+            _logger.LogWarning("Point conversion was not attempted for {AccountNumber}", _account.AccountNumber);
+        }        
     }
 
-    private async Task<string> NavigateToExchangeForCashPage()
+    private async Task<string> NavigateToHomePageAfterConversion(string metaContent)
     {
-        Dictionary<string, string> formData = new()
+        var keys = Spat4Parser.GetKeys(metaContent);
+
+        var queryParams = new Dictionary<string, string>
         {
-            { PageData.FUNCTION_ID, PageCode.FUNCTION_POINTS },
-            { PageData.MEDIA_TYPE, "pc" },
-            { PageData.PAGE_KIND, PageCode.KIND_POINTS },
-            { PageData.PAGE_TARGET, PageCode.PAGE_INDEX },
-            { PageData.P_1, string.Empty },
-            { PageData.P_2, string.Empty },
-            { PageData.P_3, string.Empty },
-            { PageData.P_4, string.Empty },
-            { PageData.P_5, string.Empty },
+            { PageData.KEY_1, keys["key1"] },
+            { PageData.KEY_2, keys["key2"] }
         };
 
-        var formEncodedContent = new FormUrlEncodedContent(formData);
-
-        var response = await _client.PostAsync("spat4/pp", formEncodedContent);
+        var uri = BuildUriWithQueryParameters(_requestPath, queryParams);
+        var response = await _client.GetAsync(uri);
         return await response.Content.ReadAsStringAsync();
     }
 
@@ -186,7 +187,7 @@ public class Spat4Client : IDisposable
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
 
-        var response = await _client.PostAsync("spat4/pp", formEncodedContent);
+        var response = await _client.PostAsync(_requestPath, formEncodedContent);
         var htmlString = await response.Content.ReadAsStringAsync();
 
         _isLoggedIn = Spat4Parser.CheckLoggedIn(htmlString);
@@ -203,24 +204,45 @@ public class Spat4Client : IDisposable
         _loggerScope?.Dispose();
     }
 
-    private async Task<string> NavigateToCompleteConversionPage()
+    private async Task<string> NavigateToUsePointsPage()
+    {
+        Dictionary<string, string> formData = new()
+        {
+            { PageData.FUNCTION_ID, PageCode.FUNCTION_POINTS },
+            { PageData.PAGE_KIND, PageCode.KIND_POINTS },
+            { PageData.PAGE_TARGET, PageCode.PAGE_INDEX },
+            { PageData.MEDIA_TYPE, "pc" },
+            { PageData.P_1, string.Empty },
+            { PageData.P_2, string.Empty },
+            { PageData.P_3, string.Empty },
+            { PageData.P_4, string.Empty },
+            { PageData.P_5, string.Empty },
+        };
+
+        var formEncodedContent = new FormUrlEncodedContent(formData);
+
+        var response = await _client.PostAsync(_requestPath, formEncodedContent);
+        return await response.Content.ReadAsStringAsync();
+    }
+
+    private async Task<string> NavigateToExchangeForCashPage()
     {
         Dictionary<string, string> formData = new()
         {
             { PageData.FUNCTION_ID, PageCode.FUNCTION_EXCHANGE_FOR_CASH },
             { PageData.MEDIA_TYPE, "pc" },
             { PageData.PAGE_KIND, PageCode.KIND_EXCHANGE_FOR_CASH},
-            { PageData.PAGE_TARGET, PageCode.PAGE_EXCHANGE_FOR_CASH_COMPLETE},
-            { PageData.P_1, _options.PointsHTMLInputValue },
+            { PageData.PAGE_TARGET, PageCode.PAGE_EXCHANGE_FOR_CASH},
+            { PageData.P_1, string.Empty },
             { PageData.P_2, string.Empty },
-            { PageData.PIN_NUMBER, _account.Pin },
-            { PageData.X, "86" },
-            { PageData.Y, "23 "},
+            { PageData.P_3, string.Empty },
+            { PageData.P_4, string.Empty },
+            { PageData.P_5, string.Empty },
         };
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
 
-        var response = await _client.PostAsync("spat4/pp", formEncodedContent);
+        var response = await _client.PostAsync(_requestPath, formEncodedContent);
         return await response.Content.ReadAsStringAsync();
     }
 
@@ -241,28 +263,28 @@ public class Spat4Client : IDisposable
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
 
-        var response = await _client.PostAsync("spat4/pp", formEncodedContent);
+        var response = await _client.PostAsync(_requestPath, formEncodedContent);
         return await response.Content.ReadAsStringAsync();
     }
 
-    private async Task<string> NavigateToUsePointsPage()
+    private async Task<string> NavigateToCompleteConversionPage()
     {
         Dictionary<string, string> formData = new()
         {
             { PageData.FUNCTION_ID, PageCode.FUNCTION_EXCHANGE_FOR_CASH },
             { PageData.MEDIA_TYPE, "pc" },
             { PageData.PAGE_KIND, PageCode.KIND_EXCHANGE_FOR_CASH},
-            { PageData.PAGE_TARGET, PageCode.PAGE_EXCHANGE_FOR_CASH},
-            { PageData.P_1, string.Empty },
+            { PageData.PAGE_TARGET, PageCode.PAGE_EXCHANGE_FOR_CASH_COMPLETE},
+            { PageData.P_1, _options.PointsHTMLInputValue },
             { PageData.P_2, string.Empty },
-            { PageData.P_3, string.Empty },
-            { PageData.P_4, string.Empty },
-            { PageData.P_5, string.Empty },
+            { PageData.PIN_NUMBER, _account.Pin },
+            { PageData.X, "86" },
+            { PageData.Y, "23 "},
         };
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
 
-        var response = await _client.PostAsync("spat4/pp", formEncodedContent);
+        var response = await _client.PostAsync(_requestPath, formEncodedContent);
         return await response.Content.ReadAsStringAsync();
     }
 
