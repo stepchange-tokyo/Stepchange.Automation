@@ -56,9 +56,25 @@ internal class PointConversionService(IOptions<PointConversionServiceOptions> se
                 await Task.Delay(conversionStartDelay, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
                 using var client = clientFactory.CreateClient(account);
-                await client.LoginAsync();
-                await client.ConvertPoints();
-                await client.LogoutAsync();
+                bool isSuccess = await client.LoginAsync();
+                if (!isSuccess)
+                {
+                    return;
+                }
+
+                isSuccess = await client.ConvertPoints();
+                if (!isSuccess)
+                {
+                    return;
+                }
+
+                isSuccess = await client.LogoutAsync();
+                if (!isSuccess)
+                {
+                    return;
+                }
+
+                logger.LogInformation("Full point conversion process completed for account {Account}.", account.AccountNumber);
             }));
 
             await Task.WhenAll(tasks);
