@@ -1,4 +1,5 @@
-﻿using Spat4.PointsConversion.Models;
+﻿using Polly;
+using Spat4.PointsConversion.Models;
 
 namespace Spat4.PointsConversion.Services;
 
@@ -10,15 +11,16 @@ public class Spat4Client : IDisposable
     private readonly Account _account;
     private readonly Spat4ClientOptions _options;
     private readonly ILogger<Spat4Client> _logger;
+    private readonly ResiliencePipeline<HttpResponseMessage> _resiliencePipeline;
     private readonly IDisposable? _loggerScope;
 
-    public Spat4Client(HttpClient client, Account account, Spat4ClientOptions options, ILogger<Spat4Client> logger)
+    public Spat4Client(HttpClient client, Account account, Spat4ClientOptions options, ILogger<Spat4Client> logger, ResiliencePipeline<HttpResponseMessage> resiliencePipeline)
     {
         _client = client;
         _account = account;
         _options = options;
         _logger = logger;
-
+        _resiliencePipeline = resiliencePipeline;
         Dictionary<string, object> scopeState = [];
         scopeState.Add(nameof(account.AccountNumber), account.AccountNumber);
         _loggerScope = _logger.BeginScope(scopeState);
@@ -154,7 +156,7 @@ public class Spat4Client : IDisposable
         else
         {
             _logger.LogWarning("Point conversion was not attempted for {AccountNumber}", _account.AccountNumber);
-        }        
+        }
     }
 
     private async Task<string> NavigateToHomePageAfterConversion(string metaContent)
@@ -322,6 +324,11 @@ public class Spat4Client : IDisposable
 
     private Uri BuildUriWithQueryParameters(string endpoint, Dictionary<string, string> queryParams)
     {
+        if (_client.BaseAddress is null)
+        {
+            throw new InvalidOperationException("The client base address cannot be null.");
+        }
+
         var uriBuilder = new UriBuilder(new Uri(_client.BaseAddress, endpoint));
         var query = new List<string>();
 
@@ -339,7 +346,9 @@ public class Spat4Client : IDisposable
     {
         await Task.Delay(Random.Shared.Next(_options.MinPageRequestWaitTimeInMilliseconds, _options.MaxPageRequestWaitTimeInMilliseconds));
 
-        var response = await _client.SendAsync(requestMessage);
+        var response = await _resiliencePipeline.ExecuteAsync(
+            async cancellationToken => await _client.SendAsync(requestMessage, cancellationToken)
+            );
 
         response.EnsureSuccessStatusCode();
 

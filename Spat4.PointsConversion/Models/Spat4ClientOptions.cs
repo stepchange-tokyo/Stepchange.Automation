@@ -6,6 +6,7 @@ public class Spat4ClientOptions
 
     public required Uri BaseAddress { get; init; }
     public required int RequestTimeoutInSeconds { get; init; }
+    public required int MaxRetries { get; init; }
     public required int MinConversionWaitTimeInMilliseconds { get; init; }
     public required int MaxConversionWaitTimeInMilliseconds { get; init; }
     public required int MinPageRequestWaitTimeInMilliseconds { get; init; }

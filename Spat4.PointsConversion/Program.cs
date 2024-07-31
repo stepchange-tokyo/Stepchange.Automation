@@ -1,3 +1,7 @@
+using Microsoft.Extensions.Options;
+using Polly;
+using Polly.Retry;
+using Spat4.PointsConversion;
 using Spat4.PointsConversion.Models;
 using Spat4.PointsConversion.Services;
 
@@ -12,6 +16,20 @@ builder.Services.AddOptions<PointConversionServiceOptions>().Bind(builder.Config
 builder.Services.AddOptions<Spat4ClientOptions>().Bind(builder.Configuration.GetSection(Spat4ClientOptions.Spat4Client));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<Spat4ClientFactory>();
+builder.Services.AddResiliencePipeline<string, HttpResponseMessage>(Constants.ResiliencePipelineKey, (builder, context) =>
+{
+    var config = context.ServiceProvider.GetRequiredService<IOptions<Spat4ClientOptions>>().Value;
+
+    builder.AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        MaxRetryAttempts = config.MaxRetries,
+        BackoffType = DelayBackoffType.Exponential,
+        UseJitter = true,
+        Delay = TimeSpan.FromSeconds(2)
+    });
+
+    builder.AddTimeout(TimeSpan.FromSeconds(config.RequestTimeoutInSeconds));
+});
 
 var app = builder.Build();
 
