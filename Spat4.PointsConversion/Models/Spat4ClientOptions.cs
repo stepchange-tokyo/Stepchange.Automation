@@ -8,6 +8,8 @@ public class Spat4ClientOptions
     public required int RequestTimeoutInSeconds { get; init; }
     public required int MinConversionWaitTimeInMilliseconds { get; init; }
     public required int MaxConversionWaitTimeInMilliseconds { get; init; }
+    public required int MinPageRequestWaitTimeInMilliseconds { get; init; }
+    public required int MaxPageRequestWaitTimeInMilliseconds { get; init; }
     public required int MaxConversionsPerAccountPerDay { get; init; }
     public required int MinimumConversionAmount { get; init; }
     public required string PointsHTMLInputValue { get; init; }

@@ -28,7 +28,8 @@ public class Spat4Client : IDisposable
     {
         _logger.LogInformation("Attempting to log in.");
 
-        var response = await _client.GetAsync(_requestPath);
+        var requestMessage = new HttpRequestMessage(HttpMethod.Get, _requestPath);
+        var response = await SendRequest(requestMessage);
         var htmlString = await response.Content.ReadAsStringAsync();
 
         var sessionId = Spat4Parser.ParseSessionId(htmlString);
@@ -53,8 +54,12 @@ public class Spat4Client : IDisposable
         };
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
+        requestMessage = new HttpRequestMessage(HttpMethod.Post, _requestPath)
+        {
+            Content = formEncodedContent
+        };
 
-        response = await _client.PostAsync(_requestPath, formEncodedContent);
+        response = await SendRequest(requestMessage);
         htmlString = await response.Content.ReadAsStringAsync();
 
         _isLoggedIn = Spat4Parser.CheckLoggedIn(htmlString);
@@ -163,12 +168,19 @@ public class Spat4Client : IDisposable
         };
 
         var uri = BuildUriWithQueryParameters(_requestPath, queryParams);
-        var response = await _client.GetAsync(uri);
+        var requestMessage = new HttpRequestMessage(HttpMethod.Get, uri);
+        var response = await SendRequest(requestMessage);
+
         return await response.Content.ReadAsStringAsync();
     }
 
     public async Task LogoutAsync()
     {
+        if (!_isLoggedIn)
+        {
+            throw new InvalidOperationException("Must be logged in to convert points.");
+        }
+
         _logger.LogInformation("Attempting to log out.");
         Dictionary<string, string> formData = new()
         {
@@ -186,8 +198,12 @@ public class Spat4Client : IDisposable
         };
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
+        var requestMessage = new HttpRequestMessage(HttpMethod.Post, _requestPath)
+        {
+            Content = formEncodedContent
+        };
 
-        var response = await _client.PostAsync(_requestPath, formEncodedContent);
+        var response = await SendRequest(requestMessage);
         var htmlString = await response.Content.ReadAsStringAsync();
 
         _isLoggedIn = Spat4Parser.CheckLoggedIn(htmlString);
@@ -220,8 +236,12 @@ public class Spat4Client : IDisposable
         };
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
+        var requestMessage = new HttpRequestMessage(HttpMethod.Post, _requestPath)
+        {
+            Content = formEncodedContent
+        };
 
-        var response = await _client.PostAsync(_requestPath, formEncodedContent);
+        var response = await SendRequest(requestMessage);
         return await response.Content.ReadAsStringAsync();
     }
 
@@ -241,8 +261,12 @@ public class Spat4Client : IDisposable
         };
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
+        var requestMessage = new HttpRequestMessage(HttpMethod.Post, _requestPath)
+        {
+            Content = formEncodedContent
+        };
 
-        var response = await _client.PostAsync(_requestPath, formEncodedContent);
+        var response = await SendRequest(requestMessage);
         return await response.Content.ReadAsStringAsync();
     }
 
@@ -262,8 +286,12 @@ public class Spat4Client : IDisposable
         };
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
+        var requestMessage = new HttpRequestMessage(HttpMethod.Post, _requestPath)
+        {
+            Content = formEncodedContent
+        };
 
-        var response = await _client.PostAsync(_requestPath, formEncodedContent);
+        var response = await SendRequest(requestMessage);
         return await response.Content.ReadAsStringAsync();
     }
 
@@ -283,8 +311,12 @@ public class Spat4Client : IDisposable
         };
 
         var formEncodedContent = new FormUrlEncodedContent(formData);
+        var requestMessage = new HttpRequestMessage(HttpMethod.Post, _requestPath)
+        {
+            Content = formEncodedContent
+        };
 
-        var response = await _client.PostAsync(_requestPath, formEncodedContent);
+        var response = await SendRequest(requestMessage);
         return await response.Content.ReadAsStringAsync();
     }
 
@@ -301,5 +333,16 @@ public class Spat4Client : IDisposable
         uriBuilder.Query = string.Join("&", query);
 
         return uriBuilder.Uri;
+    }
+
+    private async Task<HttpResponseMessage> SendRequest(HttpRequestMessage requestMessage)
+    {
+        await Task.Delay(Random.Shared.Next(_options.MinPageRequestWaitTimeInMilliseconds, _options.MaxPageRequestWaitTimeInMilliseconds));
+
+        var response = await _client.SendAsync(requestMessage);
+
+        response.EnsureSuccessStatusCode();
+
+        return response;
     }
 }
