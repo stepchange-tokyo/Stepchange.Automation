@@ -3,7 +3,7 @@ using Spat4.PointsConversion.Models;
 
 namespace Spat4.PointsConversion.Services;
 
-internal class PointConversionService : IHostedService
+internal class PointConversionService : IHostedService, IDisposable
 {
     private readonly PointConversionServiceOptions _options;
     private readonly List<Account> _accounts;
@@ -55,38 +55,41 @@ internal class PointConversionService : IHostedService
 
     private async Task ConvertPoints(CancellationToken cancellationToken)
     {
-        if (!cancellationToken.IsCancellationRequested)
+        try
         {
-            var tasks = new List<Task>();
-
-            tasks.AddRange(_accounts.Select(async account =>
+            if (!cancellationToken.IsCancellationRequested)
             {
-                var conversionStartDelay = Random.Shared.Next(_options.MinConversionStartDelayInMilliseconds, _options.MaxConversionStartDelayInMilliseconds);
-                await Task.Delay(conversionStartDelay, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                var tasks = new List<Task>();
 
-                using var client = _clientFactory.CreateClient(account);
-                bool isSuccess = await client.LoginAsync();
-                if (!isSuccess)
+                tasks.AddRange(_accounts.Select(async account =>
                 {
-                    return;
-                }
+                    var conversionStartDelay = Random.Shared.Next(_options.MinConversionStartDelayInMilliseconds, _options.MaxConversionStartDelayInMilliseconds);
+                    await Task.Delay(conversionStartDelay, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-                isSuccess = await client.ConvertPoints();
-                if (!isSuccess)
-                {
-                    return;
-                }
+                    using var client = _clientFactory.CreateClient(account);
+                    bool isSuccess = await client.LoginAsync();
+                    if (!isSuccess)
+                    {
+                        return;
+                    }
 
-                isSuccess = await client.LogoutAsync();
-                if (!isSuccess)
-                {
-                    return;
-                }
+                    isSuccess = await client.ConvertPoints();
+                    if (!isSuccess)
+                    {
+                        return;
+                    }
 
-                _logger.LogInformation("Full point conversion process completed for account {Account}.", account.AccountNumber);
-            }));
+                    _logger.LogInformation("Full point conversion process completed for account {Account}.", account.AccountNumber);
 
-            await Task.WhenAll(tasks);
+                    _ = client.LogoutAsync();
+                }));
+
+                await Task.WhenAll(tasks);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            _logger.LogInformation("Stopping point conversion due to a cancellation request.");
         }
     }
 
