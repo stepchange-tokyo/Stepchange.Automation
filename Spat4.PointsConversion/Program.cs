@@ -11,9 +11,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHostedService<PointConversionService>();
-builder.Services.AddOptions<List<Account>>().Bind(builder.Configuration.GetSection("Accounts"));
-builder.Services.AddOptions<PointConversionServiceOptions>().Bind(builder.Configuration.GetSection(PointConversionServiceOptions.PointConversionService));
-builder.Services.AddOptions<Spat4ClientOptions>().Bind(builder.Configuration.GetSection(Spat4ClientOptions.Spat4Client));
+builder.Services.AddOptions<List<Account>>().BindConfiguration("Accounts");
+builder.Services.AddOptions<PointConversionServiceOptions>().BindConfiguration(PointConversionServiceOptions.PointConversionService);
+builder.Services.AddOptions<Spat4ClientOptions>().BindConfiguration(Spat4ClientOptions.Spat4Client);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<Spat4ClientFactory>();
 builder.Services.AddResiliencePipeline<string, HttpResponseMessage>(Constants.ResiliencePipelineKey, (builder, context) =>
