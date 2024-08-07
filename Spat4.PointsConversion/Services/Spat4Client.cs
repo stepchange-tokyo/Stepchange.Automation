@@ -1,4 +1,6 @@
-﻿using Polly;
+﻿using Microsoft.Extensions.Options;
+using Polly;
+using Polly.Registry;
 using Spat4.PointsConversion.Models;
 
 namespace Spat4.PointsConversion.Services;
@@ -14,13 +16,14 @@ public class Spat4Client : IDisposable
     private readonly ResiliencePipeline<HttpResponseMessage> _resiliencePipeline;
     private readonly IDisposable? _loggerScope;
 
-    public Spat4Client(HttpClient client, Account account, Spat4ClientOptions options, ILogger<Spat4Client> logger, ResiliencePipeline<HttpResponseMessage> resiliencePipeline)
+    public Spat4Client(HttpClient client, Account account, IOptions<Spat4ClientOptions> options, ILogger<Spat4Client> logger, ResiliencePipelineProvider<string> pipelineProvider)
     {
         _client = client;
         _account = account;
-        _options = options;
+        _options = options.Value;
         _logger = logger;
-        _resiliencePipeline = resiliencePipeline;
+        _resiliencePipeline = pipelineProvider.GetPipeline<HttpResponseMessage>(Constants.ResiliencePipelineKey);
+
         Dictionary<string, object> scopeState = [];
         scopeState.Add(nameof(account.AccountNumber), account.AccountNumber);
         _loggerScope = _logger.BeginScope(scopeState);
@@ -182,7 +185,7 @@ public class Spat4Client : IDisposable
     {
         if (!_isLoggedIn)
         {
-            throw new InvalidOperationException("Must be logged in to convert points.");
+            throw new InvalidOperationException("Must be logged in to log out.");
         }
 
         _logger.LogInformation("Attempting to log out.");
