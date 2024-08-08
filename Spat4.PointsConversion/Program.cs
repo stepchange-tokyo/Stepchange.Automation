@@ -1,9 +1,35 @@
+using Microsoft.Extensions.Options;
+using Polly;
+using Polly.Retry;
+using Spat4.PointsConversion;
+using Spat4.PointsConversion.Models;
+using Spat4.PointsConversion.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHostedService<PointConversionService>();
+builder.Services.AddOptions<List<Account>>().BindConfiguration("Accounts");
+builder.Services.AddOptions<PointConversionServiceOptions>().BindConfiguration(PointConversionServiceOptions.PointConversionService);
+builder.Services.AddOptions<Spat4ClientOptions>().BindConfiguration(Spat4ClientOptions.Spat4Client);
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<Spat4ClientFactory>();
+builder.Services.AddResiliencePipeline<string, HttpResponseMessage>(Constants.ResiliencePipelineKey, (builder, context) =>
+{
+    var config = context.ServiceProvider.GetRequiredService<IOptions<Spat4ClientOptions>>().Value;
+
+    builder.AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        MaxRetryAttempts = config.MaxRetries,
+        BackoffType = DelayBackoffType.Exponential,
+        UseJitter = true,
+        Delay = TimeSpan.FromSeconds(2)
+    });
+
+    builder.AddTimeout(TimeSpan.FromSeconds(config.RequestTimeoutInSeconds));
+});
 
 var app = builder.Build();
 
@@ -16,29 +42,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast = Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast")
+app.MapGet("/status", () => "Waiting")
+.WithName("GetPointConversionStatus")
 .WithOpenApi();
 
 app.Run();
-
-internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
